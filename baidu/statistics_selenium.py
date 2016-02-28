@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import
-import logging  
+import logging
 from base64 import b64decode
 from PIL import Image
 from StringIO import StringIO
@@ -13,6 +13,12 @@ import pytesseract
 
 
 def screenshot(driver, element):
+    """根据driver获取elment对应的图像
+
+    :param driver(webdriver): PhantomJS() or Firefox() or ...
+    :param element:
+    :return: Image instance
+    """
     im = Image.open(StringIO(b64decode(driver.get_screenshot_as_base64())))
     location, size = element.location, element.size
     left = location['x']
