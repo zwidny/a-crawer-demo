@@ -1,0 +1,86 @@
+- name: Get latest code
+  hosts: webservers
+  vars:
+      repo_url: git@dev.fabibao.com:PeiwoServices/peiwo-admin.git
+      proj_dir: /sites
+      proj_name: peiwoadmin
+      proj_path: "{{ proj_dir }}/{{ proj_name }}"
+      venv_path: "{{proj_path}}/venv"
+      settings: "{{hostvars[inventory_hostname].vars.settings}}"
+  tasks:
+      - stat:
+          path: "{{proj_path}}"
+        register: repo
+
+      - name: clone repo
+        command: git clone {{repo_url}} {{proj_path}}
+        when:
+          - repo.stat.exists == False
+
+      - name: git pull latest code.
+        command: chdir={{proj_path}} git pull
+        when:
+          - repo.stat.exists == True
+      - stat:
+          path: "{{proj_path}}/venv"
+        register: venv
+
+      - name: create virtualenv
+        command: virtualenv {{venv_path}}
+        when:
+          - venv.stat.exists == False
+
+      - name: Install or update requirements if necessary
+        command: "{{venv_path}}/bin/pip install -r {{proj_path}}/requirements.txt"
+
+      - name: collect static files
+        command: chdir={{proj_path}}/src {{venv_path}}/bin/python manage.py collectstatic --noinput --settings={{settings}}
+
+      - name: Database migrations.
+        command: chdir={{proj_path}}/src {{venv_path}}/bin/python manage.py makemigrations --noinput --settings={{settings}}
+
+      - name: Database migrate.
+        command: chdir={{proj_path}}/src {{venv_path}}/bin/python manage.py migrate --noinput --settings={{settings}}
+
+      - name: Update deploy file directory.
+        replace:
+          path: "{{proj_path}}/deploy/supervisord.conf"
+          regexp: 'directory=PATH'
+          replace: "directory={{proj_path}}/src"
+
+      - name: Update deploy file command
+        replace:
+          path: "{{proj_path}}/deploy/supervisord.conf"
+          regexp: 'command=PATH'
+          replace: "command={{venv_path}}"
+
+      - name: Update deploy file command
+        replace:
+          path: "{{proj_path}}/deploy/supervisord.conf"
+          regexp: 'DJANGO_SETTINGS_MODULE=SETTINGS'
+          replace: "DJANGO_SETTINGS_MODULE={{settings}}"
+
+      - name: show gunicorn status
+        become: true
+        become_method: sudo
+        command: "chdir={{proj_path}} {{venv_path}}/bin/supervisorctl -c deploy/supervisord.conf status"
+        register: gstate
+
+
+      - name: start gunicorn
+        command: "chdir={{proj_path}} {{venv_path}}/bin/supervisord -c deploy/supervisord.conf"
+        become: yes
+        become_method: sudo
+        when:
+          - gstate.stdout == 'unix:///tmp/supervisor.newadmin.raybo.com.sock no such file'
+
+      - name: restart gunicorn
+        command: "chdir={{proj_path}} {{venv_path}}/bin/supervisorctl -c deploy/supervisord.conf restart gunicorn"
+        become: yes
+        become_method: sudo
+        when:
+          - gstate.stdout != 'unix:///tmp/supervisor.newadmin.raybo.com.sock no such file'
+
+      - name: restart nginx
+        command: service nginx restart
+
